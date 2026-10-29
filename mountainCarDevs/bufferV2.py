@@ -51,25 +51,24 @@ class Buffer(AtomicDEVS):
         accion = inputs.get(self.ACCION)
 
         if transicion is not None:
-            transicion.state = torch.tensor(transicion.state, dtype=torch.float32, device=device).unsqueeze(0)
-            transicion.reward = torch.tensor([transicion.reward], dtype = torch.float32, device=device)
+            estado = torch.tensor(transicion.state, dtype=torch.float32, device=device).unsqueeze(0)
+            recompensa = torch.tensor([transicion.reward], dtype = torch.float32, device=device)
             if self.state.pasos == 0:
                 #Es la primer transición, así que no la tengo que agregar en append dos veces
-                self.transicion_append.state = transicion.state
+                self.transicion_append.state = estado
             else:
-                self.transicion_append.next_state = transicion.state
-                self.transicion_append.reward = transicion.reward
+                self.transicion_append.next_state = estado
+                self.transicion_append.reward = recompensa
                 self.transicion_append.truncated = transicion.truncated
                 self.transicion_append.terminated = transicion.terminated
                 self.state.memoria.append(self.transicion_append)
-                self.transicion_append = TransicionDatos(state=transicion.state)
+                self.transicion_append = TransicionDatos(state=estado)
 
             self.state.pasos += 1
             if transicion.terminated or transicion.truncated:
                 self.state.episodios += 1
                 self.transicion_append.action = torch.tensor([[0]], dtype = torch.long, device=device)
-                self.transicion_append.reward = torch.tensor([transicion.reward], dtype = torch.float32, device=device)
-                print(f'# Se agregó la transición {self.transicion_append} al buffer en el paso {self.state.pasos}')
+                self.transicion_append.reward = recompensa
                 self.state.memoria.append(self.transicion_append)
                 self.state.pasos = 0
                 self.transicion_append =TransicionDatos()
