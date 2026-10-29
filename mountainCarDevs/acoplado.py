@@ -47,8 +47,9 @@ class MountainCarDevs(CoupledDEVS):
 if __name__ == '__main__':
     mountainCar = MountainCarDevs(name='mountainCar')
     sim = Simulator(mountainCar)
-    sim.setTerminationTime(8000000.0)
+    sim.setTerminationTime(4000000.0)
     sim.setClassicDEVS()
+    sim.setMessageCopy("none")
     sim.simulate()
 
         
