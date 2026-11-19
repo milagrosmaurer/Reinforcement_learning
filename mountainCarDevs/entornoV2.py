@@ -6,27 +6,13 @@ import pickle
 import json
 import math
 
-# Create a JSON Encoder class
-class json_serialize(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
-
-#TODO guardar datos, ver tema epsilon, para mi puede ser que eso se este calculando mal.
-#ver desde que posición empieza, quizá arranca mal o muy poco distribuido lo cual seria raro.
 
 FORCE = 0.001
 GRAVITY = 0.0025
 
 class EntornoV2State:
     def __init__(self, rng,vel = 0.0, sigma = 0.0, terminated = False, truncated = False, reward = -1):
-        #self.pos = rng.uniform(low=-0.6, high=-0.4)
-        self.pos = -0.5
+        self.pos = rng.uniform(low=-0.6, high=-0.4)
         self.vel = vel
         self.sigma = sigma
         self.terminated = terminated
@@ -78,7 +64,7 @@ class EntornoV2(AtomicDEVS):
         #Me guardo la mayor posicion alcanzada en un episodio
         self.max_pos = max(self.max_pos, self.state.pos)
         self.state.pos = pos
-        self.state.vel = 0.0 if (self.state.pos == -1.2 and self.state.vel < 0) else vel
+        self.state.vel = 0.0 if (self.state.pos == -1.2 and vel < 0) else vel
 
         self.transiciones.append((np.array([pos_vie, vel_vie], dtype = np.float32), accion, np.array([self.state.pos, self.state.vel], dtype = np.float32)))
         
@@ -107,10 +93,9 @@ class EntornoV2(AtomicDEVS):
             self.state = EntornoV2State(self.rng)
             self.start_pos.append(self.state.pos)
             self.state.sigma = 1.0
-            if self.episodios % 2 == 0:
+            if self.episodios % 500 == 0:
                 with open(f"resultados/resultados_{self.nombre_archivo}.json", "w") as archivo:
-                    #json.dump({"rewards": self.rewards, "posicion_start": self.start_pos, "max_pos": self.max_positions}, archivo)
-                    json.dump({"transiciones": self.transiciones, 'posiciones': self.estados, 'velocidades': self.velocidades}, archivo, cls = json_serialize)
+                    json.dump({"rewards": self.rewards}, archivo)
         else:
             self.state.sigma = INFINITY
         return self.state

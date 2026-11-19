@@ -2,19 +2,17 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
-from utiles import DQN
+from .utiles import DQN
 from collections import namedtuple
 from pypdevs.infinity import INFINITY
 from pypdevs.DEVS import AtomicDEVS
 import numpy as np
-import time
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
     "mps" if torch.backends.mps.is_available() else
     "cpu"
 )
-from utiles import TransicionDatos
 
 class OptimizadorState:
     def __init__(self):
@@ -22,18 +20,19 @@ class OptimizadorState:
         self.sigma = INFINITY
 
 class Optimizador(AtomicDEVS):
-    def __init__(self, name="Optimizador"):
+    def __init__(self, seed, nombre_archivos,name="Optimizador"):
         AtomicDEVS.__init__(self, name = name)
+        torch.manual_seed(seed)
         self.state = OptimizadorState()
-        self.target_net = DQN(2,3).to(device = device)
         self.policy_net = DQN(2,3).to(device = device)
+        self.target_net = DQN(2,3).to(device = device)
         self.state.policy_pesos = self.policy_net.state_dict()
         self.gamma = 0.99
-        self.lr = 3e-4
-        self.pasos_actualizar = 10 #TODO pasa al buffer
-        self.pasos_optimizar = 4 #TODO esto se tendría que pasar al buffer
+        self.lr = 1e-3
+        self.pasos_actualizar = 500
+        self.pasos_optimizar = 4
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr = self.lr)
-        self.rng = np.random.default_rng()
+        self.rng = np.random.default_rng(seed= seed)
         self.criterion = nn.SmoothL1Loss()
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.BATCH = self.addInPort("BATCH")
@@ -41,8 +40,14 @@ class Optimizador(AtomicDEVS):
         self.PESOS = self.addOutPort("PESOS")
         self.pasos = 0
         self.episodios = 1
+        self.n_actualizaciones = 0
+        self.ventana = 100
+        self.pasos_ep = 0
+        self.retornos = []
+        self.mejor_recompensa = -float("inf")
+        self.nombre_archivos = nombre_archivos
         
-
+        
     def intTransition(self):
         '''
         Luego de optimizar los pesos de la red en la delta externa, se pasiva esperando
@@ -57,66 +62,48 @@ class Optimizador(AtomicDEVS):
         los tengo que convertir en tensores.
         '''
         transiciones = inputs.get(self.BATCH)
-        
         transition = inputs.get(self.TRANSICION)
 
         if transition is not None:
+            _, _, terminated, truncated = transition
             self.pasos += 1
-            if transition.terminated or transition.truncated:
+            self.state.sigma = INFINITY
+            if terminated or truncated:
                 self.episodios += 1
-                self.pasos = 0 #se reinicia el contador de pasos en cada episodio
-                self.sigma = INFINITY
+                self.retornos.append(-self.pasos_ep)
+                if -self.pasos_ep > self.mejor_recompensa:
+                    self.mejor_recompensa = -self.pasos_ep
+                    torch.save(self.policy_net.state_dict(), f"mejor_modelo_{self.nombre_archivos}.pth")
+                self.pasos_ep = 0
+            else:
+                self.pasos_ep += 1
+            
 
         if transiciones is not None:
+
+            self.n_actualizaciones += 1
+            states, actions, rewards, next_states, terminals = transiciones
+            q = self.policy_net(states).gather(1, actions).squeeze(1)
+            with torch.no_grad():
+                next_v = self.target_net(next_states).max(1).values
+                target = rewards + self.gamma * next_v * (1.0 - terminals)
             
+            loss = self.criterion(q, target)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
+            self.optimizer.step()
+            self.state.policy_pesos = self.policy_net.state_dict()
+
+            if self.pasos % 5000 == 0:
+                torch.save(self.policy_net.state_dict(), 'modelo_pesos.pth')
+
             self.state.policy_pesos = self.policy_net.state_dict() 
             self.state.sigma = 0.0
+            if self.n_actualizaciones % self.pasos_actualizar == 0:
+                self.target_net.load_state_dict(self.policy_net.state_dict())
 
-            if self.pasos % self.pasos_optimizar == 0:
-                if len(transiciones) < 128:
-                    return self.state
-                else:
-                    print(f'Actualizando en paso {self.pasos} en episodio {self.episodios}')
-                    time_inicial = time.time()
-                    batch = TransicionDatos(
-                        state=[t.state for t in transiciones],
-                        action=[t.action for t in transiciones],
-                        next_state=[t.next_state for t in transiciones],
-                        reward=[t.reward for t in transiciones],
-                        terminated=[t.terminated for t in transiciones],
-                        truncated=[t.truncated for t in transiciones]
-                    )
-                    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                                            batch.next_state)))
-                    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
-                    state_batch = torch.cat(batch.state)
-                    action_batch = torch.cat(batch.action)
-                    reward_batch = torch.cat(batch.reward)
-
-                    state_action_values = self.policy_net(state_batch).gather(1, action_batch)
-                    next_state_values = torch.zeros(128)
-
-                    with torch.no_grad():
-                        next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1).values
-
-                    expected_action_values = (next_state_values * self.gamma) + reward_batch
-                    loss = self.criterion(state_action_values, expected_action_values.unsqueeze(1))
-                    self.optimizer.zero_grad()
-                    loss.backward()
-
-                    torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
-                    self.optimizer.step()
-                    self.state.policy_pesos = self.policy_net.state_dict()
-                    time_final = time.time()
-                    print(f'El optimizados tarda {(time_final - time_inicial):2f} en actualizar')
-
-            if self.pasos % self.pasos_actualizar == 0:
-                policy_net_state_dict = self.policy_net.state_dict()
-                self.target_net.load_state_dict(policy_net_state_dict)
-
-            if self.pasos % 100 == 0:
-                torch.save(self.policy_net.state_dict(), f'DQN_model_DEVS_v2.pth')
-        
         return self.state
 
     def outputFnc(self):
