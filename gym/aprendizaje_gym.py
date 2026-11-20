@@ -61,7 +61,7 @@ class DQN(nn.Module):
 
 class AgenteDQN:
     def __init__(self, n_observations, n_actions,
-                 batch_size=128, gamma=0.99, eps_start=1.0,
+                 batch_size=128, gamma=0.99, eps_start=0.99,
                  eps_end=0.01, eps_decay=4000, N=500, M=4,
                  lr=1e-3, mem_size=10000, seed=None):
         if seed is not None:
